@@ -1,0 +1,15 @@
+{
+  "name": "minecraft-ranked-server",
+  "version": "1.0.0",
+  "description": "Middleman Relay for Minecraft Ranked Mode",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
