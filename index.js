@@ -23,12 +23,13 @@ const pendingDisconnects = new Map();
 wss.on('connection', (ws) => {
     ws.room = null;
     ws.clientId = null;
+    ws.name = null;
     console.log("New Connection Attempt...");
 
     ws.on('message', (msg) => {
         try {
             const data = JSON.parse(msg);
-            if (data.type === 'IDENTIFY') handleIdentify(ws, data.clientId);
+            if (data.type === 'IDENTIFY') handleIdentify(ws, data.clientId, data.name);
             else if (ws.clientId) {
                 switch (data.type) {
                     case 'JOIN': handleJoin(ws, data.roomId); break;
@@ -43,9 +44,10 @@ wss.on('connection', (ws) => {
     ws.on('error', () => handleDisconnect(ws));
 });
 
-function handleIdentify(ws, clientId) {
+function handleIdentify(ws, clientId, name) {
     ws.clientId = clientId;
-    console.log(`Client Identified: ${clientId}`);
+    ws.name = name;
+    console.log(`Client Identified: ${name}`);
 
     if (pendingDisconnects.has(clientId)) {
         const savedState = pendingDisconnects.get(clientId);
@@ -261,7 +263,8 @@ function handlePlayerChat(ws, data) {
     // Broadcast to everyone in the room EXCEPT the sender
     // We pass the sender's ID explicitly so the receiver knows who sent it
     broadcastToRoom(ws, { 
-        type: 'PLAYER_CHAT', 
+        type: 'PLAYER_CHAT',
+        name: ws.name, 
         sender: ws.clientId, // This is the manual name (e.g., "Steve")
         content: data.content 
     });
@@ -272,3 +275,15 @@ function formatTime(score) {
     const seconds = (totalSeconds % 60);
     return `${minutes}:${seconds.toFixed(2).padStart(5, '0')}`;
 }
+
+// [ADD] Periodic Cleanup Task (Every 5 Minutes)
+setInterval(() => {
+    console.log("🧹 Running Periodic Room Cleanup...");
+    
+    for (const [id, room] of rooms.entries()) {
+        if (room.clients.length === 0) {
+            rooms.delete(id);
+            console.log(`Deleted empty room: ${id}`);
+        }
+    }
+}, 300000); // 300,000ms = 5 minutes
