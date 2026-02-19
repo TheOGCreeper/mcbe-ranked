@@ -142,7 +142,7 @@ function startCountdown(roomId) {
     room.winnerId = null;
     room.gameOver = false;
 
-    let count = 3;
+    let count = 10;
     const interval = setInterval(() => {
         if (count > 0) {
             broadcastRaw(room, { type: 'COUNTDOWN', count: count });
@@ -286,4 +286,5 @@ setInterval(() => {
             console.log(`Deleted empty room: ${id}`);
         }
     }
+
 }, 300000); // 300,000ms = 5 minutes
