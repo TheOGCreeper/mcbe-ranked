@@ -49,6 +49,7 @@ function handleIdentify(ws, clientId, name) {
     console.log(`Client Identified: ${name}`);
 
     rooms.forEach((room, roomKey) => {
+        console.log(roomKey);
         room.clients.forEach(client => {
             if(client.clientId == clientId){
                 handleJoin(ws, roomKey);
@@ -110,7 +111,13 @@ function performFullLeave(ws) {
 }
 
 function handleJoin(ws, roomId) {
-    if (ws.room) handleLeave(ws); 
+    console.log("HI WHY NO WORK");
+    console.log(ws.clientId);
+    console.log(roomId);
+    if (ws.room){
+        handleLeave(ws);
+        console.log("OHHHHHH wtf");
+    }
     if (!rooms.has(roomId)) {
         rooms.set(roomId, { clients: [], bestTime: null, winnerId: null, gameOver: false, matchId: null });
     }
