@@ -64,7 +64,7 @@ function handleIdentify(ws, clientId, name) {
     });
 
     if(rejoinKey != null){
-        handleJoin(ws, rejoinKey);
+        handleJoin(ws, rejoinKey)
     }
 }
 
@@ -119,7 +119,7 @@ function handleJoin(ws, roomId) {
     console.log("HI WHY NO WORK");
     console.log(ws.clientId);
     console.log(roomId);
-    if (ws.room){
+    if (ws.room && ws.room !== roomId){
         handleLeave(ws);
     }
     if (!rooms.has(roomId)) {
