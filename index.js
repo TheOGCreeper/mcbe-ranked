@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const { randomUUID } = require('crypto');
 const http = require('http');
 
-// --- REPLIT COMPATIBLE SERVER SETUP ---
+// --- SERVER SETUP ---
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Ranked Server is Running OK!');
@@ -10,7 +10,6 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
-// Replit uses process.env.PORT, defaults to 8080 if not found
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`Ranked Relay Server running on port ${port}`);
@@ -49,6 +48,12 @@ function handleIdentify(ws, clientId, name) {
     ws.name = name;
     console.log(`Client Identified: ${name}`);
 
+    rooms.forEach(room => {
+        room.clients.forEach(client => {
+            if(client.clientId == clientId) handleJoin(ws, room.roomId);
+        });
+    });
+
     if (pendingDisconnects.has(clientId)) {
         const savedState = pendingDisconnects.get(clientId);
         clearTimeout(savedState.timeout);
@@ -74,13 +79,10 @@ function handleIdentify(ws, clientId, name) {
 function handleDisconnect(ws) {
     if (!ws.clientId || !ws.room) return;
 
-    // Friendly "Paused" message
-    // broadcastToRoom(ws, { type: 'CHAT', msg: `§eOpponent Paused (Switching Worlds...)` });
-
     const timeout = setTimeout(() => {
         performFullLeave(ws); 
         pendingDisconnects.delete(ws.clientId);
-    }, 300000); // INCREASED TO 5 MINUTES
+    }, 300000); // 5 min to rejoin
 
     pendingDisconnects.set(ws.clientId, { timeout, roomId: ws.room, oldWS: ws });
 }
@@ -89,17 +91,18 @@ function performFullLeave(ws) {
     if (!ws.room) return;
     const room = rooms.get(ws.room);
 
-    // Safety: Don't delete if the player actually returned
+    // Don't delete if the player actually returned
     const isClientStillHere = room.clients.some(c => c.clientId === ws.clientId && c !== ws);
     if (isClientStillHere) return;
 
     if (room) {
         room.clients = room.clients.filter(c => c !== ws && c.clientId !== ws.clientId);
 
-        // SILENT CLEANUP (Message Removed)
-        // If the player is gone for >5 mins, we just remove them silently.
+        // If the player is gone for >5 mins, forfeit.
+        handlePlayerChat(ws, {content : "Opponent did not respond for 5 minutes"});
+        handlePlayerChat(ws, {content : "!forfeit"});
 
-        if (room.clients.length === 0) rooms.delete(ws.room);
+        // if (room.clients.length === 0) rooms.delete(ws.room);
     }
 }
 
@@ -109,12 +112,22 @@ function handleJoin(ws, roomId) {
         rooms.set(roomId, { clients: [], bestTime: null, winnerId: null, gameOver: false, matchId: null });
     }
     const room = rooms.get(roomId);
+    let clientAlreadyInRoom = false;
+    let oldWS;
 
-    if (room.clients.length >= 2) {
+    room.clients.forEach(client => {
+        if (client.clientId === ws.clientId) {
+            clientAlreadyInRoom = true;
+            oldWS = client;
+        }
+    });
+
+    if (room.clients.length >= 2 && !clientAlreadyInRoom) {
         ws.send(JSON.stringify({ type: 'CHAT', msg: '§cRoom Full' }));
         return;
     }
 
+    if(clientAlreadyInRoom) room.clients.delete(oldWS);
     room.clients.push(ws);
     ws.room = roomId;
     console.log(`Client ${ws.clientId} joined Room ${roomId}`);
@@ -222,14 +235,12 @@ function resolveMatch(room, winnerClientId, winningTime) {
         }
 
         if (roomKeyToDelete) {
-            // A. Notify players they are being moved to lobby
             room.clients.forEach(client => {
                 client.room = null; // Important: Mark client as "not in a room"
                 client.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
                 client.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false })); 
             });
 
-            // B. Delete the room from memory
             rooms.delete(roomKeyToDelete);
             console.log(`Room ${roomKeyToDelete} closed`);
         }
@@ -241,9 +252,9 @@ function handleLeave(ws) {
     const room = rooms.get(ws.room);
     if (room) {
         room.clients = room.clients.filter(c => c !== ws);
-        room.clients.forEach(c => {
-            // c.send(JSON.stringify({ type: 'CHAT', msg: '§cOpponent Quit.' }));
-        });
+        // room.clients.forEach(c => {
+        //     c.send(JSON.stringify({ type: 'CHAT', msg: '§cOpponent Quit.' }));
+        // });
         if (room.clients.length === 0) rooms.delete(ws.room);
     }
 }
@@ -258,14 +269,14 @@ function broadcastRaw(room, data) {
     room.clients.forEach(c => c.send(msg));
 }
 function handlePlayerChat(ws, data) {
-    if (!ws.room) return; // Player must be in a room to chat
+    if (!ws.room) return;
 
     // Broadcast to everyone in the room EXCEPT the sender
     // We pass the sender's ID explicitly so the receiver knows who sent it
     broadcastToRoom(ws, { 
         type: 'PLAYER_CHAT',
         name: ws.name, 
-        sender: ws.clientId, // This is the manual name (e.g., "Steve")
+        sender: ws.clientId,
         content: data.content 
     });
 }
@@ -276,7 +287,7 @@ function formatTime(score) {
     return `${minutes}:${seconds.toFixed(2).padStart(5, '0')}`;
 }
 
-// [ADD] Periodic Cleanup Task (Every 5 Minutes)
+// Periodic Cleanup Task (Every 5 Minutes)
 setInterval(() => {
     console.log("🧹 Running Periodic Room Cleanup...");
     
@@ -286,5 +297,4 @@ setInterval(() => {
             console.log(`Deleted empty room: ${id}`);
         }
     }
-
 }, 300000); // 300,000ms = 5 minutes
