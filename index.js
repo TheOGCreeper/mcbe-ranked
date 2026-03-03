@@ -47,38 +47,70 @@ function handleIdentify(ws, clientId, name) {
     ws.clientId = clientId;
     ws.name = name;
     console.log(`Client Identified: ${name}`);
-    disconnectedPlayers.delete(ws.clientId);
+    
+    if (disconnectedPlayers.has(ws.clientId)) {
+        clearTimeout(disconnectedPlayers.get(ws.clientId));
+        disconnectedPlayers.delete(ws.clientId);
+        console.log(`Cleared disconnect timer for ${name}. Welcome back.`);
+    }
 
+    let rejoinKey = null;
     rooms.forEach((room, roomKey) => {
-        console.log(roomKey);
         room.clients.forEach(client => {
-            if(client.clientId == clientId){
-                handleJoin(ws, roomKey);
-                console.log(roomKey);
+            if(client.clientId === clientId){
+                rejoinKey = roomKey;
             }
         });
     });
+
+    if(rejoinKey != null){
+        handleJoin(ws, rejoinKey);
+    }
 }
 
 function handleDisconnect(ws) {
     if (!ws.clientId || !ws.room) return;
-    disconnectedPlayers.set(ws.clientId, 1);
+    
+    if (disconnectedPlayers.has(ws.clientId)) {
+        clearTimeout(disconnectedPlayers.get(ws.clientId));
+    }
 
-    const timeout = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
         performFullLeave(ws); 
     }, 300000); // 5 min to rejoin
+
+    disconnectedPlayers.set(ws.clientId, timeoutId);
 
 }
 
 function performFullLeave(ws) {
+    disconnectedPlayers.delete(ws.clientId);
+
     if (!ws.room) return;
     const room = rooms.get(ws.room);
 
-    if(!disconnectedPlayers.has(ws.clientId)) return;
-
     if (room) {
-        handlePlayerChat(ws, {content : "Opponent did not respond for 5 minutes"});
-        handlePlayerChat(ws, {content : "!forfeit"});
+        //remove the disconnected player from the room array
+        room.clients = room.clients.filter(c => c.clientId !== ws.clientId);
+
+        if (room.clients.length === 0) {
+            rooms.delete(ws.room);
+            console.log(`Deleted empty room ${ws.room} after forfeit.`);
+        } else {
+            handlePlayerChat(ws, {content : "Opponent did not respond for 5 minutes."});
+            handlePlayerChat(ws, {content : "!forfeit"});
+            setTimeout(() => {
+                if (rooms.has(ws.room)) {
+                    room.clients.forEach(c => {
+                        c.room = null; 
+                        c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
+                        c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed (Forfeit).' }));
+                    });
+                    rooms.delete(ws.room);
+                    console.log(`Room ${ws.room} forcefully closed after forfeit.`);
+                }
+            }, 5000);
+        }
     }
 
 }
@@ -237,13 +269,38 @@ function resolveMatch(room, winnerClientId, winningTime) {
 function handleLeave(ws) {
     if (!ws.room) return;
     const room = rooms.get(ws.room);
+    
     if (room) {
+        // 1. Remove the player who is leaving
         room.clients = room.clients.filter(c => c !== ws);
-        // room.clients.forEach(c => {
-        //     c.send(JSON.stringify({ type: 'CHAT', msg: '§cOpponent Quit.' }));
-        // });
-        if (room.clients.length === 0) rooms.delete(ws.room);
+        
+        // 2. If a match is active, leaving = instant forfeit
+        if (room.matchId && !room.gameOver) {
+            room.gameOver = true; // Lock the room state
+            
+            // Tell the remaining player what happened
+            handlePlayerChat(ws, {content : "Opponent abandoned the match!"});
+            handlePlayerChat(ws, {content : "!forfeit"});
+            
+            // Safety net: Force close the room 5 seconds later
+            setTimeout(() => {
+                if (rooms.has(ws.room)) {
+                    room.clients.forEach(c => {
+                        c.room = null; 
+                        c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
+                        c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
+                    });
+                    rooms.delete(ws.room);
+                }
+            }, 5000);
+        } else if (room.clients.length === 0) {
+            // 3. If no match was running and the room is empty, delete it
+            rooms.delete(ws.room);
+        }
     }
+    
+    // 4. Clear the room from the socket so they can join a new one
+    ws.room = null; 
 }
 
 function broadcastToRoom(sender, data) {
