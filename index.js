@@ -100,14 +100,10 @@ function performFullLeave(ws) {
     if (isClientStillHere) return;
 
     if (room) {
-        room.clients = room.clients.filter(c => c !== ws && c.clientId !== ws.clientId);
-
-        // If the player is gone for >5 mins, forfeit.
         handlePlayerChat(ws, {content : "Opponent did not respond for 5 minutes"});
         handlePlayerChat(ws, {content : "!forfeit"});
-
-        // if (room.clients.length === 0) rooms.delete(ws.room);
     }
+
 }
 
 function handleJoin(ws, roomId) {
@@ -141,7 +137,7 @@ function handleJoin(ws, roomId) {
     console.log("Hi we got here");
     console.log(JSON.stringify(oldWS));
 
-    if(clientAlreadyInRoom) room.clients.delete(oldWS);
+    if(clientAlreadyInRoom) room.clients = room.clients.filter(thing => thing != oldWS);
     room.clients.push(ws);
     ws.room = roomId;
     console.log(`Client ${ws.clientId} joined Room ${roomId}`);
