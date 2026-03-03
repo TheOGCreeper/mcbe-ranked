@@ -48,9 +48,12 @@ function handleIdentify(ws, clientId, name) {
     ws.name = name;
     console.log(`Client Identified: ${name}`);
 
-    rooms.forEach(room => {
+    rooms.forEach((room, roomKey) => {
         room.clients.forEach(client => {
-            if(client.clientId == clientId) handleJoin(ws, room.roomId);
+            if(client.clientId == clientId){
+                handleJoin(ws, roomKey);
+                console.log(roomKey);
+            }
         });
     });
 
