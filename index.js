@@ -17,7 +17,7 @@ server.listen(port, () => {
 // ---------------------------------------
 
 const rooms = new Map(); 
-const pendingDisconnects = new Map();
+const disconnectedPlayers = new Map();
 
 wss.on('connection', (ws) => {
     ws.room = null;
@@ -47,6 +47,7 @@ function handleIdentify(ws, clientId, name) {
     ws.clientId = clientId;
     ws.name = name;
     console.log(`Client Identified: ${name}`);
+    disconnectedPlayers.delete(ws.clientId);
 
     rooms.forEach((room, roomKey) => {
         console.log(roomKey);
@@ -57,47 +58,23 @@ function handleIdentify(ws, clientId, name) {
             }
         });
     });
-
-    if (pendingDisconnects.has(clientId)) {
-        const savedState = pendingDisconnects.get(clientId);
-        clearTimeout(savedState.timeout);
-
-        const room = rooms.get(savedState.roomId);
-        if (room) {
-            const index = room.clients.indexOf(savedState.oldWS);
-            if (index !== -1) room.clients[index] = ws;
-            else room.clients.push(ws);
-            ws.room = savedState.roomId;
-
-            // ws.send(JSON.stringify({ type: 'CHAT', msg: `§aRestored Connection!` }));
-            // broadcastToRoom(ws, { type: 'CHAT', msg: `§aOpponent Rejoined!` });
-
-            if (room.matchId) {
-                ws.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: true, matchId: room.matchId }));
-            }
-        }
-        pendingDisconnects.delete(clientId);
-    }
 }
 
 function handleDisconnect(ws) {
     if (!ws.clientId || !ws.room) return;
+    disconnectedPlayers.set(ws.clientId, 1);
 
     const timeout = setTimeout(() => {
         performFullLeave(ws); 
-        pendingDisconnects.delete(ws.clientId);
     }, 300000); // 5 min to rejoin
 
-    pendingDisconnects.set(ws.clientId, { timeout, roomId: ws.room, oldWS: ws });
 }
 
 function performFullLeave(ws) {
     if (!ws.room) return;
     const room = rooms.get(ws.room);
 
-    // Don't delete if the player actually returned
-    const isClientStillHere = room.clients.some(c => c.clientId === ws.clientId && c !== ws);
-    if (isClientStillHere) return;
+    if(!disconnectedPlayers.has(ws.clientId)) return;
 
     if (room) {
         handlePlayerChat(ws, {content : "Opponent did not respond for 5 minutes"});
