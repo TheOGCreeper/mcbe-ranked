@@ -116,7 +116,6 @@ function handleJoin(ws, roomId) {
     console.log(roomId);
     if (ws.room){
         handleLeave(ws);
-        console.log("OHHHHHH wtf");
     }
     if (!rooms.has(roomId)) {
         rooms.set(roomId, { clients: [], bestTime: null, winnerId: null, gameOver: false, matchId: null });
@@ -131,11 +130,16 @@ function handleJoin(ws, roomId) {
             oldWS = client;
         }
     });
+    console.log("client already in room?");
+    console.log(clientAlreadyInRoom);
 
     if (room.clients.length >= 2 && !clientAlreadyInRoom) {
         ws.send(JSON.stringify({ type: 'CHAT', msg: '§cRoom Full' }));
         return;
     }
+
+    console.log("Hi we got here");
+    console.log(JSON.stringify(oldWS));
 
     if(clientAlreadyInRoom) room.clients.delete(oldWS);
     room.clients.push(ws);
