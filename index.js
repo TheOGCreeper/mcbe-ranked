@@ -64,7 +64,7 @@ function handleIdentify(ws, clientId, name) {
     });
 
     if(rejoinKey != null){
-        handleJoin(ws, rejoinKey)
+        handleJoin(ws, rejoinKey);
     }
 }
 
@@ -341,4 +341,5 @@ setInterval(() => {
             console.log(`Deleted empty room: ${id}`);
         }
     }
+
 }, 300000); // 300,000ms = 5 minutes
