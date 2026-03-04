@@ -75,16 +75,17 @@ function handleDisconnect(ws) {
         clearTimeout(disconnectedPlayers.get(ws.clientId));
     }
 
+    disconnectedPlayers.set(ws.clientId, timeoutId);
     const timeoutId = setTimeout(() => {
         performFullLeave(ws); 
     }, 300000); // 5 min to rejoin
-
-    disconnectedPlayers.set(ws.clientId, timeoutId);
 
 }
 
 function performFullLeave(ws) {
     disconnectedPlayers.delete(ws.clientId);
+    console.log("Player left for 5 mins: ");
+    console.log(ws.clientId);
 
     if (!ws.room) return;
     const room = rooms.get(ws.room);
@@ -116,9 +117,8 @@ function performFullLeave(ws) {
 }
 
 function handleJoin(ws, roomId) {
-    console.log("HI WHY NO WORK");
-    console.log(ws.clientId);
-    console.log(roomId);
+    console.log(`client ${ws.clientId} tried to join room ${roomId}`);
+
     if (ws.room && ws.room !== roomId){
         handleLeave(ws);
     }
@@ -135,16 +135,15 @@ function handleJoin(ws, roomId) {
             oldWS = client;
         }
     });
-    console.log("client already in room?");
-    console.log(clientAlreadyInRoom);
+    console.log(`client already in room ${roomId}? ${clientAlreadyInRoom}`);
 
     if (room.clients.length >= 2 && !clientAlreadyInRoom) {
         ws.send(JSON.stringify({ type: 'CHAT', msg: '§cRoom Full' }));
         return;
     }
 
-    console.log("Hi we got here");
-    console.log(JSON.stringify(oldWS));
+    // console.log("Hi we got here");
+    // console.log(JSON.stringify(oldWS));
 
     if(clientAlreadyInRoom) room.clients = room.clients.filter(thing => thing != oldWS);
     room.clients.push(ws);
@@ -341,5 +340,4 @@ setInterval(() => {
             console.log(`Deleted empty room: ${id}`);
         }
     }
-
 }, 300000); // 300,000ms = 5 minutes
