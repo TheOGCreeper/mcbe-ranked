@@ -10,6 +10,27 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
+function heartbeat() {
+    this.isAlive = true;
+}
+
+const pingInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+        if (ws.isAlive === false) {
+            // They didn't respond to the last ping. Drop them.
+            // This terminate() call will forcefully trigger ws.on('close')
+            return ws.terminate(); 
+        }
+        
+        ws.isAlive = false;
+        ws.ping(); // Send a ping to the client
+    });
+}, 30000); // Check every 30 seconds
+
+wss.on('close', function close() {
+    clearInterval(pingInterval);
+});
+
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`Ranked Relay Server running on port ${port}`);
@@ -23,6 +44,8 @@ wss.on('connection', (ws) => {
     ws.room = null;
     ws.clientId = null;
     ws.name = null;
+    ws.isAlive = true;
+    ws.on('pong', heartbeat);
     console.log("New Connection Attempt...");
 
     ws.on('message', (msg) => {
@@ -37,7 +60,7 @@ wss.on('connection', (ws) => {
                     case 'PLAYER_CHAT': handlePlayerChat(ws, data); break;
                 }
             }
-        } catch (e) {}
+        } catch (e) {console.error("Parse Error:", e.message);}
     });
     ws.on('close', () => handleDisconnect(ws));
     ws.on('error', () => handleDisconnect(ws));
@@ -75,11 +98,11 @@ function handleDisconnect(ws) {
         clearTimeout(disconnectedPlayers.get(ws.clientId));
     }
 
-    disconnectedPlayers.set(ws.clientId, timeoutId);
     const timeoutId = setTimeout(() => {
         performFullLeave(ws); 
     }, 300000); // 5 min to rejoin
 
+    disconnectedPlayers.set(ws.clientId, timeoutId);
 }
 
 function performFullLeave(ws) {
@@ -104,8 +127,10 @@ function performFullLeave(ws) {
                 if (rooms.has(ws.room)) {
                     room.clients.forEach(c => {
                         c.room = null; 
-                        c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
-                        c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed (Forfeit).' }));
+                        if (c.readyState === WebSocket.OPEN) {
+                            c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
+                            c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed (Forfeit).' }));
+                        }
                     });
                     rooms.delete(ws.room);
                     console.log(`Room ${ws.room} forcefully closed after forfeit.`);
@@ -232,12 +257,14 @@ function handleSplit(ws, data) {
 function resolveMatch(room, winnerClientId, winningTime) {
     const timeStr = formatTime(winningTime);
     room.clients.forEach(client => {
-        if (client.clientId === winnerClientId) {
-            client.send(JSON.stringify({ type: 'WIN', time: timeStr }));
-        } else {
-            client.send(JSON.stringify({ type: 'LOSE', time: timeStr }));
+        if (client.readyState === WebSocket.OPEN) {
+            if (client.clientId === winnerClientId) {
+                client.send(JSON.stringify({ type: 'WIN', time: timeStr }));
+            } else {
+                client.send(JSON.stringify({ type: 'LOSE', time: timeStr }));
+            }
+            client.send(JSON.stringify({ type: 'RESET' }));
         }
-        client.send(JSON.stringify({ type: 'RESET' }));
     });
 
     // 2. Wait 5 Seconds, then dissolve the room
@@ -254,9 +281,11 @@ function resolveMatch(room, winnerClientId, winningTime) {
 
         if (roomKeyToDelete) {
             room.clients.forEach(client => {
-                client.room = null; // Important: Mark client as "not in a room"
-                client.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
-                client.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false })); 
+                client.room = null;
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
+                    client.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false })); 
+                }
             });
 
             rooms.delete(roomKeyToDelete);
@@ -267,49 +296,56 @@ function resolveMatch(room, winnerClientId, winningTime) {
 
 function handleLeave(ws) {
     if (!ws.room) return;
-    const room = rooms.get(ws.room);
+    const roomId = ws.room;
+    const room = rooms.get(roomId);
     
     if (room) {
-        // 1. Remove the player who is leaving
         room.clients = room.clients.filter(c => c !== ws);
         
-        // 2. If a match is active, leaving = instant forfeit
         if (room.matchId && !room.gameOver) {
-            room.gameOver = true; // Lock the room state
+            room.gameOver = true;
             
-            // Tell the remaining player what happened
             handlePlayerChat(ws, {content : "Opponent abandoned the match!"});
             handlePlayerChat(ws, {content : "!forfeit"});
             
-            // Safety net: Force close the room 5 seconds later
             setTimeout(() => {
-                if (rooms.has(ws.room)) {
+                if (rooms.has(roomId)) {
                     room.clients.forEach(c => {
                         c.room = null; 
-                        c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
-                        c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
+                        if (c.readyState === WebSocket.OPEN) {
+                            c.send(JSON.stringify({ type: 'ROOM_STATE', isRunning: false }));
+                            c.send(JSON.stringify({ type: 'CHAT', msg: '§eMatch Room Closed.' }));
+                        }
                     });
-                    rooms.delete(ws.room);
+                    rooms.delete(roomId);
                 }
             }, 5000);
         } else if (room.clients.length === 0) {
-            // 3. If no match was running and the room is empty, delete it
-            rooms.delete(ws.room);
+            rooms.delete(roomId);
         }
     }
     
-    // 4. Clear the room from the socket so they can join a new one
     ws.room = null; 
 }
 
 function broadcastToRoom(sender, data) {
     if (!sender.room) return;
     const room = rooms.get(sender.room);
-    if (room) room.clients.forEach(c => { if (c !== sender && c.clientId !== sender.clientId) c.send(JSON.stringify(data)); });
+    if (room) {
+        room.clients.forEach(c => { 
+            if (c !== sender && c.clientId !== sender.clientId && c.readyState === WebSocket.OPEN) {
+                c.send(JSON.stringify(data)); 
+            }
+        });
+    }
 }
 function broadcastRaw(room, data) {
     const msg = JSON.stringify(data);
-    room.clients.forEach(c => c.send(msg));
+    room.clients.forEach(c => {
+        if (c.readyState === WebSocket.OPEN) {
+            c.send(msg);
+        }
+    });
 }
 function handlePlayerChat(ws, data) {
     if (!ws.room) return;
