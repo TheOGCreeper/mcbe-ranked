@@ -98,9 +98,24 @@ function handleDisconnect(ws) {
         clearTimeout(disconnectedPlayers.get(ws.clientId));
     }
 
+    // --- NEW FIX: Check for an active clone ---
+    let hasActiveConnection = false;
+    wss.clients.forEach(client => {
+        // If we find another open socket with the same ID, they already reconnected!
+        if (client !== ws && client.clientId === ws.clientId && client.readyState === WebSocket.OPEN) {
+            hasActiveConnection = true;
+        }
+    });
+
+    if (hasActiveConnection) {
+        console.log(`Ignored disconnect for old socket. ${ws.clientId} is already active.`);
+        return; // Don't plant the timebomb!
+    }
+    // ------------------------------------------
+
     const timeoutId = setTimeout(() => {
         performFullLeave(ws); 
-    }, 300000); // 5 min to rejoin
+    }, 300000); 
 
     disconnectedPlayers.set(ws.clientId, timeoutId);
 }
@@ -115,7 +130,7 @@ function performFullLeave(ws) {
 
     if (room) {
         //remove the disconnected player from the room array
-        room.clients = room.clients.filter(c => c.clientId !== ws.clientId);
+        room.clients = room.clients.filter(c => c !== ws);
 
         if (room.clients.length === 0) {
             rooms.delete(ws.room);
@@ -199,12 +214,14 @@ function startCountdown(roomId) {
     room.gameOver = false;
 
     let count = 10;
-    const interval = setInterval(() => {
+    // Attach the interval directly to the room object
+    room.countdownInterval = setInterval(() => {
         if (count > 0) {
             broadcastRaw(room, { type: 'COUNTDOWN', count: count });
             count--;
         } else {
-            clearInterval(interval);
+            clearInterval(room.countdownInterval); // Clear via the property
+            room.countdownInterval = null; // Clean up
             broadcastRaw(room, { type: 'GO', matchId: room.matchId });
         }
     }, 1000);
@@ -233,6 +250,7 @@ function handleSplit(ws, data) {
 
     if (data.name === "Final Time" && ws.room) {
         const room = rooms.get(ws.room);
+        if (room && room.gameOver) return;
         if (room) {
             if (room.bestTime === null) {
                 room.bestTime = data.time;
@@ -304,6 +322,12 @@ function handleLeave(ws) {
         
         if (room.matchId && !room.gameOver) {
             room.gameOver = true;
+
+            if (room.countdownInterval) {
+                clearInterval(room.countdownInterval);
+                room.countdownInterval = null;
+                console.log(`Aborted countdown for room ${roomId}`);
+            }
             
             handlePlayerChat(ws, {content : "Opponent abandoned the match!"});
             handlePlayerChat(ws, {content : "!forfeit"});
